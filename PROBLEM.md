@@ -1,6 +1,6 @@
 # The problem: on-premises feed analysis
 
-This is the brief that SkyPulse solves. The [design document](skypulse/DESIGN.md) maps every requirement below to the decisions that meet it, and [chapter 21](guide/21-project-skypulse.md) builds the solution step by step.
+This is the brief that SkyPulse solves. The [design document](skypulse/DESIGN.md) maps every requirement below to the decisions that meet it, and [`final_summary.md`](final_summary.md) walks through the solution.
 
 ## Who it's for
 
