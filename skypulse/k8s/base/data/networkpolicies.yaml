@@ -1,0 +1,129 @@
+# The data tier: PostgreSQL accepts connections from the two application zones (and its own
+# migrate Job), so the zones only ever meet here, never directly. Nothing in this namespace
+# may reach the internet.
+#
+#   ingestor (skypulse-ingestion) ──► postgres ◄── api, analyzer (skypulse-analysis)
+#                                      ▲    ▲
+#                                migrate    prometheus (skypulse-monitoring, metrics port only)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: skypulse-data
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: skypulse-data
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgres
+  namespace: skypulse-data
+spec:
+  podSelector:
+    matchLabels:
+      cnpg.io/cluster: feeddb
+  policyTypes: [Ingress, Egress]
+  ingress:
+    # Application clients, one list item per zone (namespace AND pod must match)
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: skypulse-ingestion
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ingestor
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: skypulse-analysis
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: api
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: skypulse-analysis
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: analyzer
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: migrate
+      ports:
+        - { protocol: TCP, port: 5432 }
+    # Replication between instances, and the operator's health checks
+    - from:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: feeddb
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: cnpg-system
+      ports:
+        - { protocol: TCP, port: 5432 }
+        - { protocol: TCP, port: 8000 }
+    # Prometheus reads the metrics exporter, and only that port (it has no database login)
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: skypulse-monitoring
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - { protocol: TCP, port: 9187 }
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: feeddb
+      ports:
+        - { protocol: TCP, port: 5432 }
+        - { protocol: TCP, port: 8000 }
+    # The CNPG instance manager talks to the Kubernetes API server (leader election, status).
+    # The API server lives on the local network, so this stays inside the security boundary.
+    - to:
+        - ipBlock: { cidr: 10.0.0.0/8 }
+        - ipBlock: { cidr: 172.16.0.0/12 }
+        - ipBlock: { cidr: 192.168.0.0/16 }
+      ports:
+        - { protocol: TCP, port: 443 }
+        - { protocol: TCP, port: 6443 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: migrate
+  namespace: skypulse-data
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: migrate
+  policyTypes: [Ingress, Egress]
+  ingress: []
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: feeddb
+      ports:
+        - { protocol: TCP, port: 5432 }

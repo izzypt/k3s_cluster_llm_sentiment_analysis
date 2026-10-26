@@ -1,0 +1,6 @@
+node_modules/
+out/
+src/generated/
+.venv/
+tts-models/
+public/voice/

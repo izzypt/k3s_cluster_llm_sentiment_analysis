@@ -1,0 +1,39 @@
+# Prometheus configuration: what to scrape, and how often.
+#
+# Prometheus finds its targets by asking the Kubernetes API for pods (it may only list pods in
+# the two namespaces below, see prometheus.yaml) and keeps the container port named "metrics".
+# When a pod is replaced (rolling update, failover), the new one is picked up automatically.
+global:
+  scrape_interval: 30s
+  scrape_timeout: 10s
+
+scrape_configs:
+  # PostgreSQL instances: database health + the SkyPulse queries in data/monitoring-queries.yaml
+  - job_name: postgres
+    kubernetes_sd_configs:
+      - role: pod
+        namespaces:
+          names: [skypulse-data]
+        selectors:
+          - role: pod
+            label: cnpg.io/cluster=feeddb,cnpg.io/podRole=instance
+    relabel_configs: &keep-metrics-port
+      - source_labels: [__meta_kubernetes_pod_container_port_name]
+        regex: metrics
+        action: keep
+      - source_labels: [__meta_kubernetes_namespace]
+        target_label: namespace
+      - source_labels: [__meta_kubernetes_pod_name]
+        target_label: pod
+
+  # The ingress controller sees every analyst request: rate, errors and latency of the API,
+  # measured where the analysts experience them, without touching the application.
+  - job_name: ingress
+    kubernetes_sd_configs:
+      - role: pod
+        namespaces:
+          names: [kube-system]
+        selectors:
+          - role: pod
+            label: app.kubernetes.io/name=traefik
+    relabel_configs: *keep-metrics-port

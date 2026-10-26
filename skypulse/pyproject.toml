@@ -1,0 +1,31 @@
+[project]
+name = "skypulse"
+version = "0.1.0"
+description = "On-premises sentiment analysis of Bluesky handles and hashtags, powered by a local LLM."
+authors = [
+    {name = "Simão Bonvalot", email= "smmbonvalot@gmail.com"}
+]
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn>=0.32",
+    "httpx>=0.28",
+    "psycopg[binary]>=3.2",
+    "psycopg-pool>=3.2",
+]
+
+[project.scripts]
+# One image, one entrypoint, four roles: `skypulse api|ingestor|analyzer|migrate`
+skypulse = "skypulse.__main__:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+]
+
+[build-system]
+requires = ["uv_build>=0.9,<0.13"]
+build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

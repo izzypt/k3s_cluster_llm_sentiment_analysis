@@ -1,0 +1,83 @@
+# SkyPulse metrics, computed by PostgreSQL itself.
+#
+# The pipeline hands work over through the database (D-1, D-2 in DESIGN.md), so the database
+# already knows whether the system is healthy: how many posts wait for the LLM, how old each
+# summary is, which subscriptions fail to poll. CloudNativePG's exporter runs these queries on
+# every Prometheus scrape and publishes each column as a metric named
+# cnpg_<query name>_<column>, e.g. cnpg_skypulse_pipeline_posts_pending.
+#
+# Rules of thumb:
+#   - `primary: true`: run only on the primary, so each value is reported once (after a
+#     failover the new primary takes over)
+#   - the exporter runs as the pg_monitor role, which the migrate Job grants read access to
+#     exactly the columns used here (see src/skypulse/db.py)
+#   - no NULLs: Prometheus has no "unknown" value, so missing timestamps fall back to created_at
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: skypulse-monitoring-queries
+  namespace: skypulse-data
+data:
+  queries: |
+    skypulse_pipeline:
+      query: |
+        SELECT
+          count(*) FILTER (WHERE ingested_at > now() - interval '5 minutes') AS posts_ingested_5m,
+          count(*) FILTER (WHERE analyzed_at > now() - interval '5 minutes') AS posts_analyzed_5m,
+          count(*) FILTER (WHERE analyzed_at IS NULL) AS posts_pending,
+          COALESCE(EXTRACT(EPOCH FROM now() - min(ingested_at) FILTER (WHERE analyzed_at IS NULL)), 0)::float8
+            AS oldest_pending_seconds
+        FROM posts
+      target_databases: ["skypulse"]
+      primary: true
+      metrics:
+        - posts_ingested_5m:
+            usage: GAUGE
+            description: Posts the ingestor stored in the last 5 minutes
+        - posts_analyzed_5m:
+            usage: GAUGE
+            description: Posts the analyzer classified with the LLM in the last 5 minutes
+        - posts_pending:
+            usage: GAUGE
+            description: Posts waiting for the LLM (the analysis backlog)
+        - oldest_pending_seconds:
+            usage: GAUGE
+            description: Age of the oldest post waiting for the LLM (0 when the backlog is empty)
+
+    skypulse_subscription:
+      query: |
+        SELECT
+          s.kind,
+          s.value,
+          EXTRACT(EPOCH FROM now() - COALESCE(sm.updated_at, s.created_at))::float8 AS summary_age_seconds,
+          COALESCE(sm.item_count, 0) AS summary_items,
+          EXTRACT(EPOCH FROM now() - COALESCE(s.last_polled_at, s.created_at))::float8 AS seconds_since_poll,
+          (s.last_error IS NOT NULL)::int AS failing,
+          (SELECT count(*) FROM posts p
+            WHERE p.subscription_id = s.id AND p.analyzed_at IS NULL) AS posts_pending
+        FROM subscriptions s
+        LEFT JOIN summaries sm ON sm.subscription_id = s.id
+      target_databases: ["skypulse"]
+      primary: true
+      metrics:
+        - kind:
+            usage: LABEL
+            description: handle or hashtag
+        - value:
+            usage: LABEL
+            description: The handle or hashtag, without @ or #
+        - summary_age_seconds:
+            usage: GAUGE
+            description: Seconds since the summary was refreshed (or since the subscription was created, if never)
+        - summary_items:
+            usage: GAUGE
+            description: Number of posts the current summary covers
+        - seconds_since_poll:
+            usage: GAUGE
+            description: Seconds since the ingestor last polled Bluesky for this subscription
+        - failing:
+            usage: GAUGE
+            description: 1 if the last poll failed (e.g. handle not found, Bluesky unreachable)
+        - posts_pending:
+            usage: GAUGE
+            description: Posts of this subscription waiting for the LLM

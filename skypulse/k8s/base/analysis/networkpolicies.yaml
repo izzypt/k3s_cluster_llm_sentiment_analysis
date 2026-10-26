@@ -1,0 +1,117 @@
+# The security boundary of the analysis zone, enforced by the cluster network.
+#
+# Kubernetes NetworkPolicies are allow-lists. Step 1 denies everything; every
+# following policy opens exactly one required path. Nothing here allows traffic
+# to the internet, so even a compromised pod in this namespace cannot reach it.
+#
+#   ingress controller ──► api ──► postgres (skypulse-data)
+#                     analyzer ──► postgres (skypulse-data)
+#                     analyzer ──► llm
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: skypulse-analysis
+spec:
+  podSelector: {}            # every pod in the namespace
+  policyTypes: [Ingress, Egress]
+---
+# Every pod may resolve names through the cluster DNS (CoreDNS in kube-system).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: skypulse-analysis
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: api
+  namespace: skypulse-analysis
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: api
+  policyTypes: [Ingress, Egress]
+  ingress:
+    # Only the ingress controller may call the API.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+      ports:
+        - { protocol: TCP, port: 8000 }
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: skypulse-data
+          podSelector:
+            matchLabels:
+              cnpg.io/cluster: feeddb
+      ports:
+        - { protocol: TCP, port: 5432 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: analyzer
+  namespace: skypulse-analysis
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: analyzer
+  policyTypes: [Ingress, Egress]
+  ingress: []                 # nobody calls the analyzer
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: skypulse-data
+          podSelector:
+            matchLabels:
+              cnpg.io/cluster: feeddb
+      ports:
+        - { protocol: TCP, port: 5432 }
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: llm
+      ports:
+        - { protocol: TCP, port: 11434 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: llm
+  namespace: skypulse-analysis
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: llm
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: analyzer
+      ports:
+        - { protocol: TCP, port: 11434 }
+  egress: []                  # the model is baked into the image: no outbound traffic at all

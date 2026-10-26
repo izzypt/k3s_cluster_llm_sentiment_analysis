@@ -1,0 +1,26 @@
+{
+  "name": "skypulse-video",
+  "private": true,
+  "type": "module",
+  "description": "SkyPulse, explained: a Remotion video of the whole system, with the real code next to every step",
+  "scripts": {
+    "snippets": "node scripts/extract-snippets.mjs",
+    "voice": "npm run snippets && node scripts/voice.mjs",
+    "studio": "npm run snippets && remotion studio",
+    "render": "npm run snippets && remotion render SkyPulse out/skypulse-explained.mp4",
+    "render:narrated": "npm run snippets && remotion render SkyPulse-Narrated out/skypulse-explained-narrated.mp4",
+    "still": "npm run snippets && remotion still SkyPulse"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.534",
+    "@remotion/google-fonts": "4.0.534",
+    "highlight.js": "11.12.0",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "remotion": "4.0.534"
+  },
+  "devDependencies": {
+    "@types/react": "18.3.12",
+    "typescript": "5.9.3"
+  }
+}

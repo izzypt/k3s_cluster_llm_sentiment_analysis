@@ -1,0 +1,52 @@
+# Kustomize "base": the environment-independent description of the whole system.
+# Overlays (k8s/overlays/*) reuse it and only change what differs per environment
+# (image registry + tags, replica counts, sizes, hostnames).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: skypulse
+    includeTemplates: true   # also label the pods, not only the top-level objects
+
+resources:
+  - namespaces.yaml
+  # --- data tier: the only place the two zones meet ---
+  - data/postgres.yaml
+  - data/monitoring-queries.yaml
+  - data/migrate.yaml
+  - data/networkpolicies.yaml
+  # --- analysis zone: local network only ---
+  - analysis/llm.yaml
+  - analysis/analyzer.yaml
+  - analysis/api.yaml
+  - analysis/ingress.yaml
+  - analysis/networkpolicies.yaml
+  # --- ingestion zone: may reach the internet ---
+  - ingestion/ingestor.yaml
+  - ingestion/networkpolicies.yaml
+  # --- monitoring: reads metrics, never application data ---
+  - monitoring/prometheus.yaml
+  - monitoring/grafana.yaml
+  - monitoring/networkpolicies.yaml
+
+# ConfigMaps generated from files. The generated name carries a hash of the content
+# (e.g. analysis-config-7b5g2kt8f4) and kustomize rewrites every reference to it, so a
+# config change rolls the pods that use it.
+configMapGenerator:
+  - name: analysis-config
+    namespace: skypulse-analysis
+    envs: [analysis/config.env]
+  - name: ingestor-config
+    namespace: skypulse-ingestion
+    envs: [ingestion/config.env]
+  # Monitoring configuration lives in real files (config/), so they stay readable and lintable
+  - name: prometheus-config
+    namespace: skypulse-monitoring
+    files: [monitoring/config/prometheus.yml]
+  - name: grafana-provisioning
+    namespace: skypulse-monitoring
+    files:
+      - monitoring/config/grafana-datasources.yaml
+      - monitoring/config/grafana-dashboards.yaml
+      - monitoring/config/skypulse-dashboard.json

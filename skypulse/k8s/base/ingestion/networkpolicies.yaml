@@ -1,0 +1,66 @@
+# The ingestion zone is the mirror image of the analysis zone:
+# it MAY reach the internet (HTTPS only) but may NOT reach the local network,
+# except for the one database port it needs. Nothing may connect to it.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: skypulse-ingestion
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: skypulse-ingestion
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ingestor
+  namespace: skypulse-ingestion
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: ingestor
+  policyTypes: [Ingress, Egress]
+  ingress: []
+  egress:
+    # The database, and nothing else, in the data tier
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: skypulse-data
+          podSelector:
+            matchLabels:
+              cnpg.io/cluster: feeddb
+      ports:
+        - { protocol: TCP, port: 5432 }
+    # The public internet over HTTPS — but not private/LAN address ranges
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 100.64.0.0/10    # carrier-grade NAT
+              - 169.254.0.0/16   # link-local (cloud metadata endpoints live here)
+      ports:
+        - { protocol: TCP, port: 443 }

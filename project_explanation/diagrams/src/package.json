@@ -1,0 +1,14 @@
+{
+  "name": "skypulse-diagrams",
+  "private": true,
+  "type": "module",
+  "description": "Renders the explanatory posters in ../ from the real source files",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "dependencies": {
+    "highlight.js": "11.10.0",
+    "mermaid": "11.4.1",
+    "puppeteer-core": "23.11.1"
+  }
+}

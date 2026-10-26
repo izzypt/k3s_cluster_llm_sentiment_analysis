@@ -1,0 +1,11 @@
+# Grafana reads this at startup ("provisioning"): the Prometheus data source is part of the
+# deployment, not something someone clicks together in the UI.
+apiVersion: 1
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy                  # Grafana's server queries Prometheus, never the browser
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false

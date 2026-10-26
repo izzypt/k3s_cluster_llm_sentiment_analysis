@@ -1,0 +1,9 @@
+# Load every dashboard JSON from this folder. Dashboards are code: edit the JSON in git,
+# redeploy, and Grafana picks up the change. Edits made in the UI are not saved.
+apiVersion: 1
+providers:
+  - name: skypulse
+    type: file
+    allowUiUpdates: false
+    options:
+      path: /etc/grafana/provisioning/dashboards-json

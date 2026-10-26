@@ -1,0 +1,70 @@
+# The only internet-facing workload: polls Bluesky and inserts posts into PostgreSQL.
+# Its database user ("ingestor") can only read subscription targets and insert posts.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ingestor
+  namespace: skypulse-ingestion
+  labels:
+    app.kubernetes.io/name: ingestor
+    app.kubernetes.io/component: worker
+spec:
+  replicas: 1   # inserts are idempotent, so 2+ replicas would also be safe
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ingestor
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ingestor
+        app.kubernetes.io/component: worker
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false             # no <SERVICE>_PORT env vars: e.g. Service "api" would inject API_PORT=tcp://… and clash with app settings
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: ingestor
+          image: skypulse-app
+          args: ["ingestor"]
+          envFrom:
+            - configMapRef:
+                name: ingestor-config
+          env:
+            - name: PGUSER
+              valueFrom:
+                secretKeyRef:
+                  name: ingestor-db-credentials
+                  key: username
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ingestor-db-credentials
+                  key: password
+          resources:
+            requests:
+              cpu: 20m
+              memory: 64Mi
+            limits:
+              memory: 192Mi
+          livenessProbe:
+            exec:
+              command:
+                - python
+                - -c
+                - "import os,sys,time; sys.exit(time.time() - os.path.getmtime('/tmp/heartbeat') > 600)"
+            initialDelaySeconds: 30
+            periodSeconds: 60
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

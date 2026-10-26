@@ -1,0 +1,53 @@
+# A local, multi-node Kubernetes cluster running k3s inside Docker.
+# k3s is the same lightweight, CNCF-certified distribution you would install on
+# on-premises servers, so what you test here is what you run in production.
+#
+#   k3d cluster create --config cluster/k3d.yaml -> On the makefile
+apiVersion: k3d.io/v1alpha5
+kind: Simple
+metadata:
+  name: skypulse
+# One control plane is a single point of failure, accepted locally: all nodes share one machine
+# anyway. Production runs 3 servers (embedded etcd); see DESIGN.md D-9.
+servers: 1   # control plane (also runs workloads in this small setup)
+agents: 2    # worker nodes -> 3 nodes total, so we can test pod spreading and node failures
+image: rancher/k3s:v1.36.5-k3s1
+
+ports:
+  # Analysts reach the cluster's ingress controller (Traefik) on http://localhost:8090
+  - port: 8090:80
+    nodeFilters:
+      - loadbalancer
+
+registries:
+  # A private image registry, like the one an on-prem site would run (Harbor, Zot, ...).
+  # From your machine you push to localhost:5050; inside the cluster the nodes
+  # pull "localhost:5050/..." which containerd transparently redirects to the registry container.
+  create:
+    name: k3d-skypulse-registry
+    host: "0.0.0.0"
+    hostPort: "5050"
+  config: |
+    mirrors:
+      "localhost:5050":
+        endpoint:
+          - http://k3d-skypulse-registry:5000
+
+options:
+  k3d:
+    wait: true
+  kubeconfig:
+    updateDefaultKubeconfig: true
+    switchCurrentContext: true
+
+
+# What it sets up:
+#-  Cluster name: skypulse, so the kubectl context is k3d-skypulse.
+#-  Topology: servers: 1 (control plane, which also runs workloads) and agents: 2 (workers). That gives 3 nodes, which is what makes it possible to test things that need more than one node:
+#   - Postgres anti-affinity: the primary and replica must be on different nodes,
+#   - API replicas spread across nodes,
+#   - node-drain and failure drills.
+# - k3s version: pinned with image: rancher/k3s:v1.36.5-k3s1, so everyone gets the same Kubernetes version.
+# - Port mapping: 8090:80 on the loadbalancer node, which is the first hop we covered. It's the only way into the cluster from your browser.
+# - A private image registry: k3d-skypulse-registry on localhost:5050. make push pushes images there, and the mirrors setting makes the nodes pull localhost:5050/... from that registry container. It stands in for an on-prem registry such as Harbor, so the cluster never pulls app images from the internet.
+# - Convenience: wait: true blocks until the cluster is ready, and the kubeconfig is updated and switched to the new context automatically.

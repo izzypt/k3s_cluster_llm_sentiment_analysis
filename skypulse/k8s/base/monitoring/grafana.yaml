@@ -1,0 +1,138 @@
+# Grafana: dashboards on top of Prometheus, at http://grafana.localhost:8090 locally.
+#
+# Stateless on purpose: the data source and the SkyPulse dashboard come from the
+# grafana-provisioning ConfigMap (files in config/), so a restarted pod looks exactly the same.
+#
+# Access: read-only for everyone who can reach it (anonymous "Viewer"), no logins, no admin.
+# That is fine on a laptop; production puts it behind the site's single sign-on (DESIGN.md §5).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: skypulse-monitoring
+  labels:
+    app.kubernetes.io/name: grafana
+    app.kubernetes.io/component: monitoring
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: grafana
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: grafana
+        app.kubernetes.io/component: monitoring
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 472          # "grafana", as in the official image
+        runAsGroup: 472
+        fsGroup: 472
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: grafana
+          image: grafana/grafana:13.2.3
+          ports:
+            - name: http
+              containerPort: 3000
+          env:
+            # Read-only, anonymous access; no login form and no admin account in use
+            - { name: GF_AUTH_ANONYMOUS_ENABLED, value: "true" }
+            - { name: GF_AUTH_ANONYMOUS_ORG_ROLE, value: Viewer }
+            - { name: GF_AUTH_DISABLE_LOGIN_FORM, value: "true" }
+            - { name: GF_AUTH_BASIC_ENABLED, value: "false" }
+            # Open the SkyPulse dashboard on the home page
+            - name: GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH
+              value: /etc/grafana/provisioning/dashboards-json/skypulse.json
+            # Air-gap friendly: never try to reach the internet (it is blocked anyway)
+            - { name: GF_PLUGINS_PREINSTALL_DISABLED, value: "true" }
+            - { name: GF_ANALYTICS_REPORTING_ENABLED, value: "false" }
+            - { name: GF_ANALYTICS_CHECK_FOR_UPDATES, value: "false" }
+            - { name: GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES, value: "false" }
+            - { name: GF_NEWS_NEWS_FEED_ENABLED, value: "false" }
+            - { name: GF_LOG_MODE, value: console }
+          # First start sets up Grafana's internal database (~1 min): allow up to 3 min
+          startupProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 5
+            failureThreshold: 36
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 50m
+              memory: 256Mi
+            limits:
+              memory: 768Mi             # measured: ~350 MiB right after start
+          volumeMounts:
+            - name: provisioning
+              mountPath: /etc/grafana/provisioning
+            - name: data              # Grafana's own scratch database; rebuilt on every start
+              mountPath: /var/lib/grafana
+            - name: tmp
+              mountPath: /tmp
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+      volumes:
+        - name: provisioning
+          configMap:
+            name: grafana-provisioning
+            items:
+              - { key: grafana-datasources.yaml, path: datasources/prometheus.yaml }
+              - { key: grafana-dashboards.yaml, path: dashboards/skypulse.yaml }
+              - { key: skypulse-dashboard.json, path: dashboards-json/skypulse.json }
+        - name: data
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: skypulse-monitoring
+spec:
+  selector:
+    app.kubernetes.io/name: grafana
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+# Same ingress controller as the app, selected by hostname. Browsers resolve *.localhost to
+# your own machine, so no /etc/hosts edits are needed. Production sets a real hostname + TLS.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: grafana
+  namespace: skypulse-monitoring
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: grafana.localhost
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: grafana
+                port:
+                  name: http

@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SkyPulse</title>
+  <style>
+    :root {
+      --bg: #f6f7f9; --card: #fff; --text: #1d2330; --muted: #667085; --border: #e3e6ea;
+      --pos: #1f9d55; --neu: #8a94a6; --neg: #d64545; --accent: #2563eb;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg: #11151c; --card: #1a202a; --text: #e6e9ef; --muted: #98a2b3; --border: #2a3240; }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font: 15px/1.5 system-ui, -apple-system, Segoe UI, sans-serif; background: var(--bg); color: var(--text); }
+    main { max-width: 960px; margin: 0 auto; padding: 24px 16px 48px; }
+    h1 { margin: 0 0 4px; font-size: 24px; }
+    .sub { color: var(--muted); margin: 0 0 20px; }
+    form { display: flex; gap: 8px; margin-bottom: 20px; }
+    input { flex: 1; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); color: var(--text); font: inherit; }
+    button { padding: 10px 16px; border: 0; border-radius: 8px; background: var(--accent); color: #fff; font: inherit; cursor: pointer; }
+    button.ghost { background: transparent; color: var(--muted); border: 1px solid var(--border); padding: 4px 10px; font-size: 13px; }
+    #error { color: var(--neg); min-height: 1.5em; margin: -12px 0 12px; }
+    .grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 10px; }
+    .head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+    .target { font-weight: 600; font-size: 17px; word-break: break-all; }
+    .badge { font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 99px; color: #fff; background: var(--neu); text-transform: uppercase; letter-spacing: .03em; }
+    .badge.positive { background: var(--pos); } .badge.negative { background: var(--neg); } .badge.mixed { background: #b7791f; }
+    .bar { display: flex; height: 8px; border-radius: 99px; overflow: hidden; background: var(--border); }
+    .bar span:nth-child(1) { background: var(--pos); } .bar span:nth-child(2) { background: var(--neu); } .bar span:nth-child(3) { background: var(--neg); }
+    .meta { color: var(--muted); font-size: 13px; display: flex; flex-wrap: wrap; gap: 4px 14px; }
+    .summary { margin: 0; }
+    .warn { color: var(--neg); font-size: 13px; }
+    .empty { color: var(--muted); text-align: center; padding: 40px 0; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>SkyPulse</h1>
+  <p class="sub">Sentiment of the Bluesky handles and hashtags you follow, analysed by a local LLM.</p>
+
+  <form id="add">
+    <input id="target" placeholder="@handle.bsky.social or #hashtag" autocomplete="off" required>
+    <button type="submit">Subscribe</button>
+  </form>
+  <div id="error"></div>
+  <div id="list" class="grid"></div>
+</main>
+
+<script>
+const $ = (sel) => document.querySelector(sel);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+
+function ago(iso) {
+  if (!iso) return "never";
+  const s = Math.max(0, (Date.now() - new Date(iso)) / 1000);
+  if (s < 60) return `${Math.round(s)}s ago`;
+  if (s < 3600) return `${Math.round(s / 60)} min ago`;
+  if (s < 86400) return `${Math.round(s / 3600)} h ago`;
+  return new Date(iso).toLocaleString();
+}
+
+function card(s) {
+  const total = s.item_count || 0;
+  const pct = (n) => total ? (100 * n / total).toFixed(1) : 0;
+  const body = s.summary == null
+    ? `<p class="summary meta">Waiting for the first analysis…</p>`
+    : `<p class="summary">${esc(s.summary)}</p>
+       <div class="bar" title="${s.positive} positive · ${s.neutral} neutral · ${s.negative} negative">
+         <span style="width:${pct(s.positive)}%"></span><span style="width:${pct(s.neutral)}%"></span><span style="width:${pct(s.negative)}%"></span>
+       </div>`;
+  return `<article class="card">
+    <div class="head">
+      <span class="target">${esc(s.display)}</span>
+      ${s.overall ? `<span class="badge ${esc(s.overall)}">${esc(s.overall)}</span>` : ""}
+    </div>
+    ${body}
+    <div class="meta">
+      <span><b>${total}</b> posts covered</span>
+      <span>updated ${ago(s.summary_updated_at)}</span>
+      ${s.pending ? `<span>${s.pending} awaiting analysis</span>` : ""}
+      <span>fetched ${ago(s.last_polled_at)}</span>
+    </div>
+    ${s.last_error ? `<div class="warn">${esc(s.last_error)}</div>` : ""}
+    <div><button class="ghost" data-id="${s.id}">Unsubscribe</button></div>
+  </article>`;
+}
+
+async function refresh() {
+  try {
+    const res = await fetch("/api/subscriptions");
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const subs = await res.json();
+    $("#list").innerHTML = subs.length ? subs.map(card).join("") : `<p class="empty">No subscriptions yet.</p>`;
+  } catch (e) {
+    $("#error").textContent = `Could not load subscriptions: ${e.message}`;
+  }
+}
+
+$("#add").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  $("#error").textContent = "";
+  const res = await fetch("/api/subscriptions", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({target: $("#target").value}),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    $("#error").textContent = typeof err.detail === "string" ? err.detail : `HTTP ${res.status}`;
+    return;
+  }
+  $("#target").value = "";
+  refresh();
+});
+
+$("#list").addEventListener("click", async (ev) => {
+  const id = ev.target.dataset?.id;
+  if (!id) return;
+  await fetch(`/api/subscriptions/${id}`, {method: "DELETE"});
+  refresh();
+});
+
+refresh();
+setInterval(refresh, 10000);
+</script>
+</body>
+</html>

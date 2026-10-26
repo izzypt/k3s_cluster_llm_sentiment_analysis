@@ -1,0 +1,25 @@
+# k3s installs the Traefik ingress controller with ONE replica. Every analyst request goes
+# through it, so it is a single point of failure: draining or losing its node means an
+# outage even though our own app runs 2+ replicas. (Found in a node-drain drill: ~16 s of
+# failed requests with one replica; with this file the same drill gave 59/59 successes.)
+#
+# HelmChartConfig is k3s's way to override the values of a bundled Helm chart.
+apiVersion: helm.cattle.io/v1
+kind: HelmChartConfig
+metadata:
+  name: traefik
+  namespace: kube-system
+spec:
+  valuesContent: |-
+    deployment:
+      replicas: 2
+    podDisruptionBudget:
+      enabled: true
+      minAvailable: 1
+    topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: DoNotSchedule
+        labelSelector:
+          matchLabels:
+            app.kubernetes.io/name: traefik

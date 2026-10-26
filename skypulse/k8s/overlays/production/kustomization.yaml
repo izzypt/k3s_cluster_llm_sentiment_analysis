@@ -1,0 +1,58 @@
+# Example production overlay for an on-prem site (not used by `make start`).
+#
+#   kubectl apply -k k8s/overlays/production      # or let Argo CD do it (deploy/argocd/)
+#
+# Same base, different knobs: internal registry, immutable version tags,
+# more replicas, a real hostname with TLS, bigger database volumes.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+
+images:
+  - name: skypulse-app
+    newName: registry.analysts.internal/skypulse/app
+    newTag: "0.1.0"
+  - name: skypulse-llm
+    newName: registry.analysts.internal/skypulse/llm
+    newTag: "0.35.1-gemma4-e2b-it-qat"
+
+patches:
+  # 3 PostgreSQL instances: survives losing a node and still has a synchronous standby
+  - target: { kind: Cluster, name: feeddb }
+    patch: |
+      - op: replace
+        path: /spec/instances
+        value: 3
+      - op: replace
+        path: /spec/storage/size
+        value: 50Gi
+  # Two LLM replicas so summaries keep flowing during node maintenance
+  - target: { kind: Deployment, name: llm }
+    patch: |
+      - op: replace
+        path: /spec/replicas
+        value: 2
+  - target: { kind: HorizontalPodAutoscaler, name: api }
+    patch: |
+      - op: replace
+        path: /spec/minReplicas
+        value: 3
+  # Real hostname + TLS certificate (e.g. issued by cert-manager from an internal CA)
+  - target: { kind: Ingress, name: skypulse }
+    patch: |
+      - op: add
+        path: /spec/rules/0/host
+        value: skypulse.analysts.internal
+      - op: add
+        path: /spec/tls
+        value:
+          - hosts: [skypulse.analysts.internal]
+            secretName: skypulse-tls
+  # Dashboards for operators. Before exposing it, put SSO in front of it (DESIGN.md §5, item 8)
+  - target: { kind: Ingress, name: grafana }
+    patch: |
+      - op: replace
+        path: /spec/rules/0/host
+        value: grafana.analysts.internal

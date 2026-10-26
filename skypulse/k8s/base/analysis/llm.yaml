@@ -1,0 +1,95 @@
+# The local LLM server (Ollama + a small Gemma model baked into the image).
+#
+# Only the analyzer calls it, asynchronously. The analysts' web app never waits on it, so a
+# single replica is acceptable for availability: if it restarts, summaries are refreshed
+# a little later, but analysts can keep reading and managing subscriptions.
+# (The production overlay runs 2 replicas.)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: llm
+  namespace: skypulse-analysis
+  labels:
+    app.kubernetes.io/name: llm
+    app.kubernetes.io/component: inference
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: llm
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1          # start the new version first...
+      maxUnavailable: 0    # ...and only then stop the old one
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: llm
+        app.kubernetes.io/component: inference
+    spec:
+      automountServiceAccountToken: false   # it never talks to the Kubernetes API
+      enableServiceLinks: false             # no <SERVICE>_PORT env vars: e.g. Service "api" would inject API_PORT=tcp://… and clash with app settings
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: ollama
+          image: skypulse-llm            # replaced by the overlay with registry/name:tag
+          args: ["serve"]
+          ports:
+            - name: http
+              containerPort: 11434
+          env:
+            - name: OLLAMA_NUM_PARALLEL
+              value: "2"
+          resources:
+            requests:
+              cpu: "1"
+              memory: 3Gi
+            limits:
+              memory: 8Gi
+          readinessProbe:
+            httpGet:
+              path: /api/version
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/version
+              port: http
+            periodSeconds: 20
+            failureThreshold: 6        # model inference can make it briefly slow to answer
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: home
+              mountPath: /home/ollama
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: home
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: llm
+  namespace: skypulse-analysis
+  labels:
+    app.kubernetes.io/name: llm
+spec:
+  selector:
+    app.kubernetes.io/name: llm
+  ports:
+    - name: http
+      port: 11434
+      targetPort: http

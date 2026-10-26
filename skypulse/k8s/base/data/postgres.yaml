@@ -1,0 +1,62 @@
+# PostgreSQL managed by the CloudNativePG operator (https://cloudnative-pg.io).
+#
+# "Cluster" is not a built-in Kubernetes kind: it is a Custom Resource that the operator
+# watches. From these ~30 lines the operator creates and runs for us:
+#   - 2 PostgreSQL pods (1 primary + 1 streaming replica) on different nodes
+#   - a PersistentVolumeClaim per instance
+#   - Services: feeddb-rw (always the primary), feeddb-ro (replicas), feeddb-r (any)
+#   - a Secret "feeddb-app" with the schema owner's credentials (used only by the migrate Job,
+#     so it never leaves this namespace)
+#   - automatic failover: if the primary dies, a replica is promoted and feeddb-rw follows it
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: feeddb
+  namespace: skypulse-data
+spec:
+  instances: 2
+
+  storage:
+    size: 1Gi
+
+  bootstrap:
+    initdb:
+      database: skypulse
+      owner: skypulse   # -> Secret feeddb-app (username, password, uri, ...)
+
+  # One least-privilege login role per application zone. Their passwords come from Secrets
+  # we create (see `make secrets`) in this namespace AND in the zone's own namespace; the
+  # table-level GRANTs are applied by the migrate Job.
+  managed:
+    roles:
+      - name: ingestor          # skypulse-ingestion: read targets, insert posts
+        ensure: present
+        login: true
+        passwordSecret:
+          name: ingestor-db-credentials
+      - name: analysis          # skypulse-analysis: subscriptions + results, no schema changes
+        ensure: present
+        login: true
+        passwordSecret:
+          name: analysis-db-credentials
+
+  # Never put both instances on the same node: one node failure must not take out the database.
+  affinity:
+    enablePodAntiAffinity: true
+    topologyKey: kubernetes.io/hostname
+    podAntiAffinityType: required
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 512Mi
+
+  # Every instance already runs a Prometheus exporter on port 9187 (instance up, replication
+  # lag, connections, database size, ...). On top of that, it turns our own SQL queries into
+  # SkyPulse metrics: backlog, summary age, ingest errors. No application code involved.
+  monitoring:
+    customQueriesConfigMap:
+      - name: skypulse-monitoring-queries
+        key: queries

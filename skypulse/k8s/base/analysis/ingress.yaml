@@ -1,0 +1,20 @@
+# HTTP entry point for analysts. The ingress controller (Traefik, bundled with k3s) receives
+# requests on the node/load-balancer and forwards them to the "api" Service.
+# On-prem, the controller's LoadBalancer IP lives on the analysts' LAN only (e.g. via MetalLB).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: skypulse
+  namespace: skypulse-analysis
+spec:
+  ingressClassName: traefik
+  rules:
+    - http:          # no "host:" -> any hostname; the production overlay sets one + TLS
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: api
+                port:
+                  name: http

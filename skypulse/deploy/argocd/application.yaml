@@ -1,0 +1,52 @@
+# It shows how the project would be delivered at a real site, so the answer to "how would you deploy this in production?" is a concrete file, not just a description.
+#
+# GitOps (optional, for real sites): Argo CD runs inside the cluster, watches this Git
+# repository and keeps the cluster in sync with k8s/overlays/production.
+#
+# Continuous delivery then becomes: CI builds + pushes an image, bumps newTag in the
+# overlay (a Git commit), Argo CD notices and performs the rolling update.
+# Rollback = `git revert`.
+#
+#
+# Locally, delivery is make update. 
+# The Argo CD Application and the production overlay are the production path I designed but didn't run here. 
+# A demo machine doesn't need a Git server and Argo CD. The manifests are already compatible, for example the migrate Job has Sync hook annotations."
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: skypulse
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://git.analysts.internal/platform/skypulse.git
+    targetRevision: main
+    path: k8s/overlays/production
+  destination:
+    server: https://kubernetes.default.svc
+  syncPolicy:
+    automated:
+      prune: true      # delete resources that were removed from Git
+      selfHeal: true   # undo manual changes made with kubectl
+    syncOptions:
+      - ServerSideApply=true
+    # Argo CD is a GitOps controller that runs inside a Kubernetes cluster. Its job is to keep the cluster matching what a Git repo says.
+
+ # How it works:
+ # 1. You create an Application resource that says "this repo, this branch, this path → this cluster".
+ # 2. Argo CD pulls the repo every 3 minutes by default, or immediately when a webhook fires. It renders the manifests (plain YAML, Kustomize or Helm) into the desired state.
+ # 3. It compares that with the live state in the cluster. Any difference shows as OutOfSync.
+ # 4. It syncs, meaning it applies the difference. This happens automatically with automated, or when someone clicks Sync.
+ #   - prune deletes resources that were removed from Git.
+ #   - selfHeal reverts manual kubectl changes.
+ # 5. It reports health for each resource (Deployments rolled out, pods ready) in a UI and CLI.
+
+ # It's the same reconcile loop as every Kubernetes controller, except the source of truth is Git instead of etcd.
+
+ # Why use it:
+ # - Git is the source of truth. Every deploy is a commit, so it's reviewable and auditable.
+ # - Rollback = git revert.
+ # - Pull-based. CI never needs cluster credentials or inbound access, which suits air-gapped sites.
+ # - Drift is detected and fixed automatically.
+
+ # One-liner: "Argo CD continuously reconciles the cluster against Git: Git says what should run, and Argo CD makes it so and keeps it that way."

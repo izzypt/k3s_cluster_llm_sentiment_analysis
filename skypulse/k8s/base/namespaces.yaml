@@ -1,0 +1,45 @@
+# Three namespaces = two application zones + a data tier.
+#
+#   skypulse-ingestion : talks to the internet (Bluesky), writes raw posts to the database
+#   skypulse-analysis  : LLM, analyzer and the analysts' web app; NO internet access
+#   skypulse-data      : PostgreSQL and its owner credentials; accepts connections from the two
+#                        zones, which never talk to each other
+#   skypulse-monitoring: Prometheus + Grafana; reads metrics, never touches application data
+#
+# "restricted" is the strictest Pod Security Standard: pods must run as non-root, drop all
+# Linux capabilities, use a seccomp profile, and may not escalate privileges.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: skypulse-analysis
+  labels:
+    skypulse.io/zone: analysis
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/warn: restricted
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: skypulse-ingestion
+  labels:
+    skypulse.io/zone: ingestion
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/warn: restricted
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: skypulse-data
+  labels:
+    skypulse.io/zone: data
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/warn: restricted
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: skypulse-monitoring
+  labels:
+    skypulse.io/zone: monitoring
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/warn: restricted

@@ -1,0 +1,12 @@
+.venv
+.git
+.build
+.secrets
+**/__pycache__
+.pytest_cache
+k8s
+cluster
+deploy
+scripts
+docs
+*.md
